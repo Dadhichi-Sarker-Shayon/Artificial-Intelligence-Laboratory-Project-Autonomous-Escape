@@ -16,6 +16,8 @@ circular radar (remembered afterwards), and all incoming debris. Phobos has no
 air, so a glowing debris streak is visible anywhere in the sky, and the rover
 sees where it lands. Boulder drops outside the radar stay hidden.
 """
+import random
+import time
 from types import SimpleNamespace
 
 from .config import OPEN, SOFT, HARD, INF, DEFAULT
@@ -26,9 +28,13 @@ ROVER, ALIEN = 'rover', 'alien'
 
 
 class GameState:
-    def __init__(self, gmap, rules=DEFAULT):
+    def __init__(self, gmap, rules=DEFAULT, game_seed=None):
         self.map = gmap
         self.rules = rules
+        # every game gets its own seed (from the clock unless given), so strike
+        # timing, debris delay and damage differ each game but can be replayed
+        self.game_seed = game_seed if game_seed is not None else time.time_ns() % 2 ** 32
+        self.rng = random.Random(self.game_seed)
         self.rover = gmap.start
         self.blk = {}          # true boulders: tile -> SOFT/HARD
         self.pending = {}      # incoming debris: tile -> turns until landing
@@ -38,7 +44,12 @@ class GameState:
         self.shortest = L
         self.fuel0 = self.fuel = round(rules.fuel_mult * L)
         self.budget = rules.alien_budget
+        if rules.random_events:                       # some games the alien has a strike more or less
+            self.budget += self.rng.randint(-1, 1)
+        self.budget0 = self.budget
         self.tick = 0
+        T = rules.alien_every
+        self.next_strike = self.rng.randint(1, T) if rules.random_events else T
         self.turn = ROVER      # whose decision is next
         self.shots = 0
         self.hits = 0
@@ -50,14 +61,26 @@ class GameState:
         self.sense()
 
     @classmethod
-    def new(cls, seed, rules=DEFAULT):
-        return cls(mapgen.generate(seed, rules), rules)
+    def new(cls, seed, rules=DEFAULT, game_seed=None):
+        return cls(mapgen.generate(seed, rules), rules, game_seed)
+
+    @classmethod
+    def random_game(cls, game_seed=None):
+        """A completely random game: a new complex map (random size, base and pad
+        positions, maze plus features) and rules drawn for it."""
+        from .config import random_rules
+        if game_seed is None:
+            game_seed = random.SystemRandom().randrange(2 ** 32)
+        gmap = mapgen.generate_random(game_seed)
+        return cls(gmap, random_rules(game_seed, gmap), game_seed)
 
     # ---------------------------------------------------------------- views
     def clone(self):
         s = object.__new__(GameState)
         s.__dict__.update(self.__dict__)
         s.blk = dict(self.blk)
+        s.rng = random.Random()
+        s.rng.setstate(self.rng.getstate())
         s.pending = dict(self.pending)
         s.belief = dict(self.belief)
         s.seen_pending = dict(self.seen_pending)
@@ -125,8 +148,13 @@ class GameState:
         self.sense()
         if self._check_end():
             return
-        if self.budget > 0 and self.tick % self.rules.alien_every == 0:
+        if self.budget > 0 and self.tick >= self.next_strike:
             self.turn = ALIEN
+
+    def strike_gap(self):
+        T = self.rules.alien_every
+        j = max(1, T // 2)                         # vary by up to half the interval
+        return max(1, self.rng.randint(T - j, T + j)) if self.rules.random_events else T
 
     def _land_debris(self):
         for p in sorted(self.pending):
@@ -135,9 +163,11 @@ class GameState:
                 continue
             del self.pending[p]
             if p == self.rover:
-                self.fuel -= self.rules.debris_damage
+                d = self.rules.debris_damage
+                dmg = self.rng.randint(d - 2, d + 2) if self.rules.random_events else d
+                self.fuel -= dmg
                 self.hits += 1
-                self._event(f'Debris hits the rover! -{self.rules.debris_damage} fuel')
+                self._event(f'Debris hits the rover! -{dmg} fuel')
             elif self.blk.get(p, OPEN) == SOFT:
                 self.blk[p] = HARD
                 self._event(f'Debris hardens boulder at {p}')
@@ -184,8 +214,10 @@ class GameState:
                 self.blk[p] = SOFT
                 self._event(f'Alien drops a boulder at {p}')
             else:
-                self.pending[p] = self.rules.debris_delay
+                d = self.rules.debris_delay
+                self.pending[p] = self.rng.randint(max(1, d - 1), d + 1) if self.rules.random_events else d
                 self._event(f'Alien flings debris at {p}')
+        self.next_strike = self.tick + self.strike_gap()
         self.turn = ROVER
         self.sense()
         self._check_end()

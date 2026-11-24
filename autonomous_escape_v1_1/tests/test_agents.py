@@ -48,9 +48,9 @@ def test_unaided_rover_wins_without_alien():
 
 
 def test_core_beats_greedy_on_sample():
-    seeds = range(200, 215)
-    core = sum(play(sd, 'A*', 'Core')['winner'] == ALIEN for sd in seeds)
-    greedy = sum(play(sd, 'A*', 'Greedy')['winner'] == ALIEN for sd in seeds)
+    games = [(m, g) for m in (19, 4, 13, 1, 5) for g in range(3)]     # the five maps, fixed game seeds
+    core = sum(play(m, 'A*', 'Core', game_seed=g)['winner'] == ALIEN for m, g in games)
+    greedy = sum(play(m, 'A*', 'Greedy', game_seed=g)['winner'] == ALIEN for m, g in games)
     assert core > greedy
 
 

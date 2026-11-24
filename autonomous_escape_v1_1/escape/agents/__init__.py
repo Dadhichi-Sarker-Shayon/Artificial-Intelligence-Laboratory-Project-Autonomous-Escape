@@ -7,11 +7,19 @@ ALIEN_BY_NAME = {c.name: c for c in ALIENS}
 
 
 def make_rover(name, seed=0):
-    return ROVER_BY_NAME[name]()
+    import random
+    rover = ROVER_BY_NAME[name]()
+    rover.rng = random.Random(seed)          # breaks ties between equally good routes
+    return rover
 
 
 def make_alien(name, seed=0, **kw):
+    import random
     cls = ALIEN_BY_NAME[name]
     if cls in (RandomAlien, MCTSAlien):
         kw.setdefault('seed', seed)
-    return cls(**kw)
+    alien = cls(**kw)
+    alien.rng = getattr(alien, 'rng', None) or random.Random(seed)    # every alien varies its choices
+    if hasattr(alien, 'greedy'):
+        alien.greedy.rng = random.Random(seed + 1)
+    return alien

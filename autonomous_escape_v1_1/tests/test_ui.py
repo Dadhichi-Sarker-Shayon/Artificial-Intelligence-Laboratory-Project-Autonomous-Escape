@@ -52,13 +52,22 @@ def test_human_rover_moves_and_shoots():
     d = (tgt[0] - s.rover[0], tgt[1] - s.rover[1])
     keys = {(-1, 0): pg.K_UP, (1, 0): pg.K_DOWN, (0, -1): pg.K_LEFT, (0, 1): pg.K_RIGHT}
     s.blk[tgt] = SOFT
+    def alien_moves():                          # strikes come at random turns now
+        while s.turn == ALIEN and not s.result:
+            app.next_time = 0
+            app.update()
     app.handle(key(keys[d]))                    # bump into soft boulder -> shoot
     assert s.shots == 1 and tgt not in s.blk
+    alien_moves()
+    if s.blk.get(tgt):                          # the alien may have re-blocked it
+        del s.blk[tgt]
     app.handle(key(keys[d]))                    # now drive onto it
     assert s.rover == tgt
-    for _ in range(s.rules.alien_every - 2):    # wait until the alien's turn
+    for _ in range(40):                         # wait until the alien's turn
+        if s.turn == ALIEN:
+            break
         app.handle(key(pg.K_SPACE))
-    assert s.tick == s.rules.alien_every and s.turn == ALIEN
+    assert s.turn == ALIEN
     app.next_time = 0
     app.update()                                # AI alien strikes
     assert s.turn == ROVER

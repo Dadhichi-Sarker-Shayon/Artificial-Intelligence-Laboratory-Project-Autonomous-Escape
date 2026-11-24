@@ -39,7 +39,7 @@ class AStarRover(Agent):
 
     def act(self, v):
         c = [0]
-        _, path = astar(v.map, v.belief, v.rover, v.map.goal, v.rules, counter=c)
+        _, path = astar(v.map, v.belief, v.rover, v.map.goal, v.rules, extra=self.tie_noise(v.map), counter=c)
         self.nodes += c[0]
         return path_action(v, path[1] if len(path) > 1 else None)
 
@@ -314,7 +314,9 @@ class FuzzyRover(Agent):
                     if p in on_route or any(q in on_route for q in v.map.nbrs.get(p, ()))), default=10)
         margin = (v.fuel - cost) / max(v.fuel, 1) if cost != INF else 0
         k = self.decide_caution(margin, detour, near)
-        extra = {p: k * self.SOFT_FEAR for p in softs}
+        extra = dict(self.tie_noise(v.map))
+        for p in softs:
+            extra[p] = extra.get(p, 0) + k * self.SOFT_FEAR
         for p, ttl in v.pending.items():
             extra[p] = extra.get(p, 0) + k * self.DEBRIS_FEAR * (2 if ttl == 1 else 1)
         _, path = astar(v.map, v.belief, v.rover, v.map.goal, v.rules, extra=extra, counter=c)

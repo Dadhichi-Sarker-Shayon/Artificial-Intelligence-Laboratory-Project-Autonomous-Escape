@@ -40,10 +40,15 @@ class GreedyAlien(Agent):
     side = ALIEN
 
     def act(self, s):
-        for p in rover_path(s):
-            if s.alien_can_target(p):
-                return action_for(s, p)
-        return None
+        """Block one of the first few legal tiles on the rover's route, picked at
+        random (nearer ones more likely)."""
+        options = [p for p in rover_path(s) if s.alien_can_target(p)][:3]
+        if not options:
+            return None
+        rng = getattr(self, 'rng', None)
+        if rng is None:
+            return action_for(s, options[0])
+        return action_for(s, rng.choices(options, weights=[3, 2, 1][:len(options)])[0])
 
 
 class CoreAlien(Agent):
@@ -86,9 +91,14 @@ class CoreAlien(Agent):
 
     def act(self, s):
         cut, need, seal, arrive = self.plan(s)
-        if cut and seal <= arrive + s.rules.alien_every:
+        rng = getattr(self, 'rng', None)
+        slack = s.rules.alien_every + (rng.randint(-2, 3) if rng else 0)     # how bold it is varies
+        if rng and rng.random() < 0.12:                                       # sometimes harasses instead
+            cut = []
+        if cut and seal <= arrive + slack:
             moves = bfs_moves(s.map, s.blk, s.rover)
-            for p in sorted(cut, key=lambda p: moves.get(p, INF)):
+            jitter = {p: (rng.random() * 3 if rng else 0) for p in cut}
+            for p in sorted(cut, key=lambda p: moves.get(p, INF) + jitter[p]):
                 if s.alien_can_target(p):
                     self.info = f'sealing cut of {len(cut)}: {seal} vs rover {arrive}'
                     return action_for(s, p)

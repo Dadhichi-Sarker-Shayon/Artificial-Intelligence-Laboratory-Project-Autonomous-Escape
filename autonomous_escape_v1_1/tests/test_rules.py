@@ -6,11 +6,15 @@ from escape import GameState, Rules, SOFT, HARD, INF, ROVER, ALIEN
 from escape.fastsim import Sim
 from escape.graph import astar, cost_to_go, disjoint_routes, manhattan
 from escape.mapgen import generate
+from escape.config import DEFAULT
+from dataclasses import replace
+
+FIXED = replace(DEFAULT, random_events=False)    # exact timings for rule checks
 
 
 @pytest.fixture
 def s():
-    return GameState.new(100)
+    return GameState.new(100, FIXED)
 
 
 def free_neighbor(s):
@@ -133,7 +137,7 @@ def test_sealed_ends_game(s):
 
 
 def test_score_is_fuel_fraction():
-    s = GameState.new(3)
+    s = GameState.new(3, FIXED)
     path = astar(s.map, {}, s.rover, s.map.goal, s.rules)[1]
     for p in path[1:]:
         if s.turn == ALIEN:
@@ -159,7 +163,7 @@ def test_cost_to_go_matches_astar():
 def test_fastsim_matches_gamestate(seed):
     """Random play: the search simulator must follow the real rules exactly."""
     rng = random.Random(seed)
-    s = GameState.new(seed)
+    s = GameState.new(seed, FIXED)
     sim = Sim.from_state(s)
     while s.result is None:
         if s.turn == ALIEN:
@@ -197,3 +201,46 @@ def test_radar_is_a_circle(s):
     R = s.rules.radar
     assert s.in_radar((r0 + R, c0)) and s.in_radar((r0 + 3, c0 + 4))
     assert not s.in_radar((r0 + R, c0 + 1))
+
+
+def _strike_ticks(game_seed, n=60):
+    s = GameState.new(100, game_seed=game_seed)
+    ticks = []
+    while s.tick < n and not s.result:
+        if s.turn == ALIEN:
+            ticks.append(s.tick)
+            s.apply_alien(None)
+        else:
+            s.apply_rover(('wait', None))
+    return ticks
+
+
+def test_games_are_random_but_replayable():
+    a, b = _strike_ticks(1), _strike_ticks(2)
+    assert _strike_ticks(1) == a                     # same game seed: identical game
+    assert any(_strike_ticks(g) != a for g in range(2, 8))   # other seeds: different timings
+    for t0, t1 in zip(a, a[1:]):
+        assert 5 <= t1 - t0 <= 15                    # about every 10 turns, give or take 5
+
+
+def test_debris_delay_varies():
+    delays = set()
+    for g in range(12):
+        s = GameState.new(100, game_seed=g)
+        p = next(q for q in s.map.open_tiles if s.alien_can_target(q))
+        s.turn = ALIEN
+        s.apply_alien(('debris', p))
+        delays.add(s.pending[p])
+    assert delays <= {1, 2, 3} and len(delays) > 1
+
+
+def test_random_games_differ_and_are_complex():
+    games = [GameState.random_game(g) for g in (11, 22, 33, 44)]
+    layouts = {(s.map.size, s.map.start, s.map.goal, tuple(s.map.features)) for s in games}
+    assert len(layouts) == 4                                   # every game a different map
+    assert len({(s.rules.alien_every, s.budget0, s.rules.fuel_mult) for s in games}) > 1
+    for s in games:
+        L, _ = astar(s.map, {}, s.map.start, s.map.goal, s.rules)
+        assert L >= 1.05 * manhattan(s.map.start, s.map.goal)  # routes bend around the debris
+        assert disjoint_routes(s.map, 2) >= 2                  # never a single forced corridor
+    assert GameState.random_game(11).map.walls == games[0].map.walls   # replayable from its seed

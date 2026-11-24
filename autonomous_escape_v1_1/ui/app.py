@@ -19,6 +19,7 @@ import pygame as pg
 from escape import GameState, OPEN, SOFT, HARD, ROVER, ALIEN, INF
 from escape.agents import ROVER_BY_NAME, ALIEN_BY_NAME, make_rover, make_alien, CoreAlien
 from escape.graph import astar, manhattan
+from escape.config import rules_for
 from . import sprites, terrain
 
 W, H = 1280, 780
@@ -26,9 +27,12 @@ TILE = 24                     # world pixels per tile; the camera scales the wor
 GX, GY = 0, 0                 # the board is drawn in world coordinates
 VIEW = pg.Rect(12, 12, 756, 756)   # where the board appears on screen
 PX = 792                      # panel left edge
-MAPS = [(19, 'Stickney Rim'), (4, 'Kepler Grooves'), (13, 'Limtoc Basin'), (1, 'Reldresal Maze'),
-        (5, 'Drunlo Serpentine')]    # the five hand-picked giant maps (51 x 51)
-MAP_CACHE = os.path.join(os.path.dirname(__file__), 'assets', 'maps')
+# The five regions set the look (colours, sun, signature feature). Everything
+# else is random every game: map size, base and pad, maze, features, rules.
+MAPS = [(1, 'Stickney Rim'), (2, 'Kepler Grooves'), (3, 'Limtoc Basin'), (4, 'Reldresal Maze'),
+        (5, 'Drunlo Serpentine')]
+MAP_STYLE = {1: ('rings', 'iron'), 2: ('bars', 'basalt'), 3: ('islands', 'pale'), 4: ('scatter', 'boulder'),
+             5: ('ridges', 'ice')}
 PW = W - PX - 16
 ASSETS = os.path.join(os.path.dirname(__file__), 'assets')
 
@@ -100,7 +104,8 @@ class App:
         self.text_cache = {}
         self.mode = mode
         self.rover_name, self.alien_name = rover, alien
-        self.seed = seed if seed is not None else MAPS[0][0]
+        ids = [m for m, _ in MAPS]
+        self.seed = MAPS[0][0] if seed is None else seed if seed in ids else MAPS[seed % len(MAPS)][0]
         self.speed = speed
         self.screen_name = 'menu'
         self.menu_row = 0
@@ -281,21 +286,21 @@ class App:
     def start_game(self, new_seed=False):
         if new_seed:
             self.seed = MAPS[(self.map_index() + 1) % len(MAPS)][0]
-        if self.seed not in self.terrain_cache and not self.headless:
+        if not self.headless:
             self.screen.blit(self.space, (0, 0))
-            self.blit_text(f'Landing on Phobos: {self.map_name()}...', (W // 2, H // 2), 28, TEXT, True, 'center')
+            self.blit_text(f'Landing on Phobos: {self.map_name()}...', (W // 2, H // 2 - 16), 28, TEXT, True, 'center')
+            self.blit_text('Generating a new terrain for this game', (W // 2, H // 2 + 20), 18, MUTED, False, 'center')
             pg.display.flip()
-        self.state = GameState.new(self.seed)
-        self.rover_ai = make_rover(self.rover_name, self.seed) if self.mode != 'rover' else None
-        self.alien_ai = make_alien(self.alien_name, self.seed, **self._alien_kw()) if self.mode != 'alien' else None
+        # a completely random game: new map size, base and pad, maze + features, and rules
+        self.state = GameState.random_game()
+        g = self.state.game_seed                     # one fresh random seed per game, from the OS clock/entropy
+        self.rover_ai = make_rover(self.rover_name, g) if self.mode != 'rover' else None
+        self.alien_ai = make_alien(self.alien_name, g, **self._alien_kw()) if self.mode != 'alien' else None
         for a in (self.rover_ai, self.alien_ai):
             if a:
                 a.reset()
         self.core_view = CoreAlien()
-        if self.seed not in self.terrain_cache:
-            if len(self.terrain_cache) > 2:
-                self.terrain_cache.clear()
-            self.terrain_cache[self.seed] = self.load_terrain(self.state.map)
+        self.terrain_cache = {self.seed: self.load_terrain(self.state.map, self.state.game_seed)}
         S = self.state.map.size * TILE
         self.world = pg.Surface((S, S)).convert() if pg.display.get_surface() else pg.Surface((S, S))
         self.zoom = self.fit_zoom()
@@ -321,25 +326,12 @@ class App:
         self.screen_name = 'game'
         pg.key.set_repeat(260, 150)
 
-    def load_terrain(self, gmap):
-        """The lit ground for a map: built once (a few seconds for a giant map),
-        then cached as an image next to the game."""
-        import hashlib
-        key = hashlib.md5(''.join('#' if w else '.' for row in gmap.walls for w in row).encode()).hexdigest()[:10]
-        path = os.path.join(MAP_CACHE, f'terrain_{gmap.seed}_{key}_{TILE}.png')
-        try:
-            img = pg.image.load(path)
-            if img.get_size() == (gmap.size * TILE, gmap.size * TILE):
-                return img.convert() if pg.display.get_surface() else img
-        except (pg.error, FileNotFoundError):
-            pass
-        surf = terrain.build(gmap, TILE)
-        try:
-            os.makedirs(MAP_CACHE, exist_ok=True)
-            pg.image.save(surf, path)
-        except (pg.error, OSError):
-            pass
-        return surf
+    def load_terrain(self, gmap, game_seed=None):
+        """Build this game's ground: the map's own theme, with every detail
+        (sun angle, colours, craters, rocks) re-rolled from the game's seed."""
+        theme = MAP_STYLE[self.seed][1]
+        surf = terrain.build(gmap, TILE, theme, game_seed)
+        return surf.convert() if pg.display.get_surface() else surf
 
     def map_name(self, seed=None):
         seed = self.seed if seed is None else seed
@@ -390,7 +382,9 @@ class App:
             self.effects.append(('impact', p, now, 700))
         if s.hits > hits:
             self.effects.append(('hit', s.rover, now, 700))
-            self.effects.append(('float', (s.rover, f'-{s.rules.debris_damage} FUEL', RED), now, 1200))
+            dmg = next((m.split('-')[1].split()[0] for _, m in reversed(s.log) if 'Debris hits' in m),
+                       s.rules.debris_damage)
+            self.effects.append(('float', (s.rover, f'-{dmg} FUEL', RED), now, 1200))
         self.overlay_cache = None
         if s.turn == ALIEN and self.mode == 'rover':
             self.next_time = now + 450
@@ -496,7 +490,7 @@ class App:
             ('Mode', dict(MODES)[self.mode], True),
             ('Rover AI', self.rover_name if self.mode != 'rover' else 'You', self.mode != 'rover'),
             ('Alien AI', self.alien_name if self.mode != 'alien' else 'You', self.mode != 'alien'),
-            ('Map', f'{self.map_index() + 1} / {len(MAPS)}   {self.map_name()}', True),
+            ('Region', f'{self.map_index() + 1} / {len(MAPS)}   {self.map_name()}', True),
             ('Speed', f'{self.speed} moves / s', self.mode != 'rover'),
         ]
 
@@ -586,12 +580,14 @@ class App:
             (CYAN, f'The rover acts every turn. A move or a wait costs {R.move_cost} fuel.'),
             (CYAN, f'Laser: blast an adjacent loose boulder for {R.shot_cost} fuel.'),
             (CYAN, f'The ridges are known from orbit. Radar sees boulders {R.radar} tiles around.'),
-            (ORANGE, f'The alien strikes every {R.alien_every} turns, {R.alien_budget} strikes in all.'),
+            (ORANGE, 'Every game is new: map size, maze, base and pad, how often the alien strikes '
+                     'and how many strikes it gets are all random.'),
             (ORANGE, 'Boulder: blocks a tile at once. Hidden from the rover outside its radar.'),
-            (ORANGE, f'Debris: a glowing streak, visible anywhere, lands {R.debris_delay} turns later. It fuses a '
-                     f'boulder (laser-proof) or hits the rover for {R.debris_damage} fuel.'),
+            (ORANGE, f'Debris: a glowing streak, visible anywhere, lands {R.debris_delay - 1}-{R.debris_delay + 1} '
+                     f'turns later. It fuses a boulder (laser-proof) or hits the rover for '
+                     f'{R.debris_damage - 2}-{R.debris_damage + 2} fuel.'),
             (MUTED, 'No strikes next to the rover or near the base and the pad.'),
-            (GREEN, f'Start with {R.fuel_mult}x the fuel of the shortest route. Reach the pad to win.'),
+            (GREEN, 'Start with 1.6-2.2x the fuel of the shortest route. Reach the pad to win.'),
         ]
         y = card.y + 64
         for col, line in lines:
@@ -1033,7 +1029,9 @@ class App:
         sc = self.screen
         rover_view = self.viewer() == 'rover'
         self.blit_text('AUTONOMOUS ESCAPE', (PX, 10), 26, TEXT, True)
-        self.blit_text(f'{dict(MODES)[self.mode]}   ·   {self.map_name(s.map.seed)}', (PX + 2, 46), 16, MUTED)
+        feats = ' + '.join(getattr(s.map, 'features', []))
+        self.blit_text(f'{self.map_name()}  ·  {s.map.size}x{s.map.size}  ·  {feats}  ·  #{s.game_seed}',
+                       (PX + 2, 46), 15, MUTED)
 
         # matchup
         r = self.card(PX, 76, PW, 58)
@@ -1070,7 +1068,7 @@ class App:
         r = self.card(PX, 236, PW, 86)
         self.blit_text('ALIEN', (r.x + 16, r.y + 9), 13, ORANGE, True)
         self.blit_text(f'Turn {s.tick}', (r.right - 16, r.y + 6), 18, TEXT, True, 'topright')
-        for i in range(s.rules.alien_budget):
+        for i in range(s.budget0):
             cx = r.x + 22 + i * 22
             used = i >= s.budget
             pg.draw.circle(sc, (70, 60, 60) if used else ORANGE, (cx, r.y + 40), 7, 2 if used else 0)
@@ -1081,7 +1079,7 @@ class App:
         elif s.budget == 0:
             msg = 'Alien is out of strikes'
         else:
-            k = s.rules.alien_every - s.tick % s.rules.alien_every
+            k = max(1, s.next_strike - s.tick)
             msg = f'Next strike in {k} turn{"s" if k > 1 else ""}'
         if s.pending and not s.result:
             msg += f'   ·   {len(s.pending)} debris incoming'

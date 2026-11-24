@@ -1,20 +1,53 @@
-# Autonomous Escape — version 1.1 (five giant maps)
+# Autonomous Escape — version 1.1 (random debris fields)
 
-The final 2D game (version 1) with five hand-picked giant maps instead of random ones.
+The final 2D game (version 1), where every game is new and nothing is fixed.
 
-* **Maps:** 51 x 51 tiles each (version 1 was 21 x 21): Stickney Rim, Kepler Grooves,
-  Limtoc Basin, Reldresal Maze, Drunlo Serpentine. Picked from 30 candidates for the most
-  junctions, dead ends and independent routes. Four rock ridges with gaps at alternating
-  ends force every route to switch back across the field, so the shortest route is about
-  140 moves (a straight crossing would be 92), with 5 independent routes and about 1,500
-  junctions per map.
+* **A new debris field every game** (`escape/mapgen.py`, `generate_random`):
+  * random size from 41 x 41 to 61 x 61, with the base and pad on random opposite sides or corners
+  * clustered boulders and crater pits with winding channels carved between base and pad,
+    plus one or two random features: crater-rim rings, walls of rocks, diagonal ridges,
+    rock islands, or extra boulder scatter
+  * accepted only with at least 3 independent routes (fair) and routes that bend around
+    the debris.
+* **Rules drawn every game** (`escape/config.py`, `random_rules`): how often the alien
+  strikes (every 3-7 turns), its strike budget (sized to the map's narrowest choke point,
+  around what a full seal needs), starting fuel (1.6-2.2x the shortest route), plus
+  random strike timing, debris delay (1-3 turns) and debris damage (4-8).
+* **Unpredictable AIs:** rovers choose between nearly-equal routes at random; the Core alien
+  varies which choke tiles it hits, how bold it is, and sometimes harasses instead of
+  sealing; Greedy picks one of its top three targets.
+* **Five regions** set the look only (colours, sun, signature feature): Stickney Rim
+  (iron-red, giant crater), Kepler Grooves (basalt, grooves), Limtoc Basin (pale mesas),
+  Reldresal Maze (brown, boulders), Drunlo Serpentine (blue-grey frost). All draw the
+  debris as boulder clusters and crater pits.
+* **Replay:** each game's seed is shown on screen ("#..."); `GameState.random_game(seed)`
+  rebuilds exactly that game.
+* **Camera:** opens zoomed out to fit the map; wheel zooms at the cursor, right- or middle-drag
+  pans (middle only when playing the alien), Z shows the whole map, V follows the rover.
+* **Balance** over 48 random games: Core alien beats A* 6/16 and Fuzzy 2/16; Greedy 0/16.
+
+---|---|---|---|
+  | Stickney Rim | concentric crater rims with gaps | iron-red dust, giant crater with rays | 12 strikes |
+  | Kepler Grooves | long horizontal walls of pits, staggered gaps | dark basalt, parallel grooves | 10 strikes |
+  | Limtoc Basin | open plains with big mesa islands | pale dust, smooth plains | 14 strikes |
+  | Reldresal Maze | dense scatter of small boulders | brown boulder fields | 12 strikes |
+  | Drunlo Serpentine | zigzag diagonal ridges (switchbacks) | blue-grey frost, ice ridges | 10 strikes |
+
+  Every layout still guarantees at least 5 independent routes. Styles live in
+  `escape/config.py` (`STYLE_RULES`) and `escape/mapgen.py`; looks in `ui/terrain.py` (`THEMES`).
 * **Camera:** a map no longer fits the screen at full size, so the game opens zoomed out to
   show the whole map. Mouse wheel zooms at the cursor, right- or middle-drag pans (middle
   only when playing the alien), Z shows the whole map, V follows the rover, [ and ] zoom.
-* **Rules for the long maps:** the alien strikes every 10 turns, 10 strikes in all.
-  On the five maps the Core alien beats the A*, Fuzzy and Minimax rovers 60% of the time
-  (3 of 5 maps); Greedy never wins.
-* Map terrain is cached in `ui/assets/maps/` so the maps load instantly.
+* **Every game is random.** Each game draws a fresh seed (shown on screen as "game #...").
+  The alien's strike timing varies by up to half its interval, its budget by one strike, debris lands
+  1-3 turns after launch and hits for 4-8 fuel, the Random and MCTS aliens use the game seed,
+  and rovers pick randomly between equally good routes. A game seed is recorded with every
+  benchmark row, so any game can be replayed exactly (`play(map, rover, alien, game_seed=...)`).
+  Set `random_events=False` in `escape/config.py` for the old fixed timings.
+* **Balance:** the alien strikes about every 5 turns on all maps. Core alien vs A* rover over
+  6 random games per map: Stickney Rim 2/6, Kepler Grooves 3/6, Limtoc Basin 2/6,
+  Reldresal Maze 3/6, Drunlo Serpentine 4/6 alien wins. Greedy never won.
+* Terrain is generated fresh for every game (2-5 seconds behind a loading screen).
 
 ---
 

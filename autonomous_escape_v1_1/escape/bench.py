@@ -1,6 +1,7 @@
 """Benchmark: every rover against every alien on the same seeded maps."""
 import math
 import os
+import random
 import time
 from concurrent.futures import ProcessPoolExecutor
 
@@ -19,11 +20,14 @@ def wilson(k, n, z=1.96):
     return max(0.0, c - h), min(1.0, c + h)
 
 
-def play(seed, rover_name, alien_name, rules=DEFAULT, alien_kw=None):
-    """Play one full game; returns a result row."""
-    s = GameState.new(seed, rules)
-    rover = make_rover(rover_name, seed)
-    alien = make_alien(alien_name, seed, **(alien_kw or {}))
+def play(seed, rover_name, alien_name, rules=DEFAULT, alien_kw=None, game_seed=None):
+    """Play one full game; returns a result row. Each game draws its own random
+    game_seed (recorded in the row) unless one is given to replay a game."""
+    if game_seed is None:
+        game_seed = random.SystemRandom().randrange(2 ** 32)
+    s = GameState.new(seed, rules, game_seed)
+    rover = make_rover(rover_name, game_seed)
+    alien = make_alien(alien_name, game_seed, **(alien_kw or {}))
     rover.reset()
     alien.reset()
     t_r = t_a = 0.0
@@ -42,7 +46,7 @@ def play(seed, rover_name, alien_name, rules=DEFAULT, alien_kw=None):
             t_r += time.perf_counter() - t0
             n_r += 1
             s.apply_rover(a)
-    return dict(seed=seed, rover=rover_name, alien=alien_name, winner=s.result,
+    return dict(seed=seed, game_seed=game_seed, rover=rover_name, alien=alien_name, winner=s.result,
                 reason=s.reason, score=round(s.score, 2), turns=s.tick, shots=s.shots,
                 debris_hits=s.hits, alien_actions=s.alien_moves,
                 rover_ms=1000 * t_r / max(n_r, 1), alien_ms=1000 * t_a / max(n_a, 1),
